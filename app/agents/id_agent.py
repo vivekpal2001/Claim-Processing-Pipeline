@@ -1,9 +1,11 @@
 """
 ID Agent — Extracts identity information from identity document pages.
 
-Processes ONLY pages classified as 'identity_document' by the Segregator.
+Processes pages classified as 'identity_document' AND 'claim_forms'
+by the Segregator (policy details are on claim forms, not ID cards).
 """
 
+import json
 import logging
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.services.llm_service import get_llm
@@ -29,7 +31,7 @@ IMPORTANT:
 - If the same field appears on multiple pages, prefer the most complete/detailed version.
 - If a field is truly not found on any page, set it to null.
 
-Return a JSON object matching this exact structure:
+Return ONLY a valid JSON object matching this exact structure:
 {
     "patient_name": "John Doe",
     "date_of_birth": "1990-01-15",
@@ -45,8 +47,10 @@ def extract_identity(pages: list[PageData]) -> dict | None:
     """
     Extract identity information from the given pages.
 
+    Uses JSON mode for faster response than tool calling.
+
     Args:
-        pages: Only the pages classified as 'identity_document'
+        pages: Pages classified as 'identity_document' and 'claim_forms'
 
     Returns:
         Extracted identity data as dict, or None if no pages provided
@@ -56,19 +60,21 @@ def extract_identity(pages: list[PageData]) -> dict | None:
         return None
 
     llm = get_llm(temperature=0.0)
-    structured_llm = llm.with_structured_output(IdentityData)
 
     pages_text = "\n\n".join(
         f"--- PAGE {p.page_number} ---\n{p.text}" for p in pages
     )
 
     try:
-        result: IdentityData = structured_llm.invoke(
+        response = llm.invoke(
             [
                 SystemMessage(content=ID_AGENT_PROMPT),
                 HumanMessage(content=f"Extract identity information from these pages:\n\n{pages_text}"),
-            ]
+            ],
+            response_format={"type": "json_object"},
         )
+        parsed = json.loads(response.content)
+        result = IdentityData(**parsed)
         logger.info(f"ID Agent extracted: {result.patient_name}")
         return result.model_dump()
     except Exception as e:

@@ -3,6 +3,9 @@ Segregator Agent — Classifies PDF pages into 9 document types using LLM.
 
 This is the brain of the pipeline. It analyzes every page and routes
 them to the appropriate extraction agents.
+
+Uses JSON mode (faster than tool calling) with the full-power model
+for accurate classification.
 """
 
 import json
@@ -32,7 +35,7 @@ Rules:
 - Provide a confidence score (0.0 to 1.0) for each classification
 - If a page has no text, classify as "other" with low confidence
 
-Return a JSON object with this exact structure:
+Return ONLY a valid JSON object with this exact structure:
 {
     "classifications": [
         {"page_number": 1, "document_type": "identity_document", "confidence": 0.95},
@@ -44,6 +47,8 @@ Return a JSON object with this exact structure:
 def classify_pages(pages: list[PageData]) -> dict[str, list[int]]:
     """
     Classify all pages into document types using LLM.
+
+    Uses the full-power model with JSON mode for fast, accurate classification.
 
     Args:
         pages: List of PageData extracted from PDF
@@ -64,16 +69,19 @@ def classify_pages(pages: list[PageData]) -> dict[str, list[int]]:
         f"{pages_text}"
     )
 
-    # Use structured output for reliable JSON parsing
-    structured_llm = llm.with_structured_output(SegregationResult)
+    messages = [
+        SystemMessage(content=SEGREGATOR_SYSTEM_PROMPT),
+        HumanMessage(content=human_message),
+    ]
 
     try:
-        result: SegregationResult = structured_llm.invoke(
-            [
-                SystemMessage(content=SEGREGATOR_SYSTEM_PROMPT),
-                HumanMessage(content=human_message),
-            ]
+        # JSON mode is faster than tool calling for the same model
+        response = llm.invoke(
+            messages,
+            response_format={"type": "json_object"},
         )
+        parsed = json.loads(response.content)
+        result = SegregationResult(**parsed)
     except Exception as e:
         logger.error(f"Segregator LLM call failed: {e}")
         # Fallback: classify all pages as "other"

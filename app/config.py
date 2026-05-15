@@ -4,6 +4,7 @@ Application configuration.
 To switch LLM providers, change LLM_PROVIDER in your .env file:
     LLM_PROVIDER=gemini  →  Uses Google Gemini Flash
     LLM_PROVIDER=openai  →  Uses OpenAI GPT-4o-mini
+    LLM_PROVIDER=groq    →  Uses Groq Llama (70B for extraction, 8B for routing)
 """
 
 import os
@@ -29,6 +30,8 @@ class Settings:
     # Groq (only needed if LLM_PROVIDER=groq)
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_FAST_MODEL: str = os.getenv("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
 
 
 settings = Settings()
+

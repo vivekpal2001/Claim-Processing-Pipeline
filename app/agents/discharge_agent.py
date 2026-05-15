@@ -4,6 +4,7 @@ Discharge Summary Agent — Extracts medical discharge information.
 Processes ONLY pages classified as 'discharge_summary' by the Segregator.
 """
 
+import json
 import logging
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.services.llm_service import get_llm
@@ -25,7 +26,7 @@ Extract the following fields from the provided discharge summary pages:
 
 If a field is not found, set it to null (or empty list for list fields).
 
-Return a JSON object matching this exact structure:
+Return ONLY a valid JSON object matching this exact structure:
 {
     "patient_name": "John Doe",
     "admission_date": "2024-01-10",
@@ -42,6 +43,8 @@ def extract_discharge_summary(pages: list[PageData]) -> dict | None:
     """
     Extract discharge summary information from the given pages.
 
+    Uses JSON mode for faster response than tool calling.
+
     Args:
         pages: Only the pages classified as 'discharge_summary'
 
@@ -53,19 +56,21 @@ def extract_discharge_summary(pages: list[PageData]) -> dict | None:
         return None
 
     llm = get_llm(temperature=0.0)
-    structured_llm = llm.with_structured_output(DischargeSummaryData)
 
     pages_text = "\n\n".join(
         f"--- PAGE {p.page_number} ---\n{p.text}" for p in pages
     )
 
     try:
-        result: DischargeSummaryData = structured_llm.invoke(
+        response = llm.invoke(
             [
                 SystemMessage(content=DISCHARGE_AGENT_PROMPT),
                 HumanMessage(content=f"Extract discharge summary from these pages:\n\n{pages_text}"),
-            ]
+            ],
+            response_format={"type": "json_object"},
         )
+        parsed = json.loads(response.content)
+        result = DischargeSummaryData(**parsed)
         logger.info(f"Discharge Agent extracted for patient: {result.patient_name}")
         return result.model_dump()
     except Exception as e:

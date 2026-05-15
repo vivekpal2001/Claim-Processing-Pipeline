@@ -25,16 +25,10 @@ def extract_pages(pdf_bytes: bytes) -> list[PageData]:
         page = doc[page_num]
         text = page.get_text("text").strip()
 
-        # TODO: For scanned PDFs with little/no text, add vision support:
-        # if len(text) < 50:
-        #     pix = page.get_pixmap(dpi=200)
-        #     image_bytes = pix.tobytes("png")
-        #     image_base64 = base64.b64encode(image_bytes).decode()
-        #     → Send image to LLM via multimodal message
-
+        # Fallback text for scanned/image-only pages
         pages.append(
             PageData(
-                page_number=page_num + 1,  # 1-indexed
+                page_number=page_num + 1,
                 text=text if text else "[No text content - possibly scanned image]",
             )
         )

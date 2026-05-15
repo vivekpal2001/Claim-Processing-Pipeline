@@ -2,6 +2,7 @@
 Itemized Bill Agent — Extracts billing line items and totals.
 
 Processes ONLY pages classified as 'itemized_bill' by the Segregator.
+Uses JSON mode as primary method with robust fallback parsing.
 """
 
 import json
@@ -76,7 +77,6 @@ def _clean_llm_json(raw: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
 
     # Evaluate arithmetic expressions in numeric values
-    # Matches patterns like: 6113.0 + 216.3 or 6418.65 - 21.63 + 206.35
     def _eval_match(match):
         expr = match.group(1)
         try:
@@ -85,7 +85,6 @@ def _clean_llm_json(raw: str) -> str:
         except Exception:
             return match.group(0)
 
-    # Match numeric arithmetic expressions (not inside strings)
     text = re.sub(
         r'(?<=:)\s*([\d.]+(?:\s*[+\-*/]\s*[\d.]+)+)',
         lambda m: " " + _eval_match(m),
@@ -116,23 +115,22 @@ def _extract_json_from_text(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Last resort: try cleaning more aggressively
-    # Remove any non-JSON text before first { and after last }
+    # Last resort: extract between first { and last }
     first_brace = cleaned.find("{")
     last_brace = cleaned.rfind("}")
     if first_brace != -1 and last_brace != -1:
         subset = cleaned[first_brace : last_brace + 1]
         return json.loads(subset)
 
-    raise ValueError(f"Could not extract valid JSON from LLM response")
+    raise ValueError("Could not extract valid JSON from LLM response")
 
 
 def extract_bill(pages: list[PageData]) -> dict | None:
     """
     Extract itemized bill information from the given pages.
 
-    Uses structured output with robust fallback parsing for
-    Llama/Groq models that produce imperfect JSON.
+    Uses JSON mode as the primary method (faster than tool calling).
+    Falls back to raw text parsing if JSON mode fails.
 
     Args:
         pages: Only the pages classified as 'itemized_bill'
@@ -155,29 +153,22 @@ def extract_bill(pages: list[PageData]) -> dict | None:
         HumanMessage(content=f"Extract all billing items and totals from these pages:\n\n{pages_text}"),
     ]
 
-    # Attempt 1: Structured output via tool/function calling
+    # Attempt 1: JSON mode (faster than tool calling)
     try:
-        structured_llm = llm.with_structured_output(ItemizedBillData)
-        result: ItemizedBillData = structured_llm.invoke(messages)
+        response = llm.invoke(
+            messages,
+            response_format={"type": "json_object"},
+        )
+        parsed = _extract_json_from_text(response.content)
+        result = ItemizedBillData(**parsed)
         logger.info(f"Bill Agent extracted {len(result.items)} items, total: {result.grand_total}")
         return result.model_dump()
     except Exception as e:
-        logger.warning(f"Bill Agent structured output failed, trying JSON fallback: {e}")
+        logger.warning(f"Bill Agent JSON mode failed, trying raw fallback: {e}")
 
-    # Attempt 2: Fallback — raw JSON with robust parsing
+    # Attempt 2: Fallback — raw text with robust cleaning
     try:
-        fallback_prompt = BILL_AGENT_PROMPT + (
-            "\n\nIMPORTANT: Return ONLY the raw JSON object. "
-            "No markdown, no code fences, no explanation, no comments. "
-            "All numbers must be plain numeric values, no arithmetic."
-        )
-        response = llm.invoke(
-            [
-                SystemMessage(content=fallback_prompt),
-                HumanMessage(content=f"Extract all billing items and totals from these pages:\n\n{pages_text}"),
-            ]
-        )
-
+        response = llm.invoke(messages)
         parsed = _extract_json_from_text(response.content)
         result = ItemizedBillData(**parsed)
         logger.info(f"Bill Agent (fallback) extracted {len(result.items)} items, total: {result.grand_total}")
