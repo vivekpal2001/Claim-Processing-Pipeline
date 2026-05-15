@@ -8,6 +8,8 @@ I built it using **LangGraph** for orchestrating multiple LLM agents that each s
 
 Insurance companies get these thick PDF claim packets. Each packet has like 10-18 pages — some are ID cards, some are hospital bills, some are lab reports, discharge summaries, etc. Manually going through all that is painful and error-prone. So the idea is: let AI agents handle it.
 
+Live : https://web-production-7b006.up.railway.app/ui/
+
 ## How the Pipeline Works
 
 Pretty straightforward flow:
