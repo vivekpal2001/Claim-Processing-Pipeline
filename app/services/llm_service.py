@@ -25,6 +25,7 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             model=settings.GEMINI_MODEL,
             google_api_key=settings.GOOGLE_API_KEY,
             temperature=temperature,
+            max_tokens=4096,
         )
     elif settings.LLM_PROVIDER == "openai":
         from langchain_openai import ChatOpenAI
@@ -33,6 +34,7 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             model=settings.OPENAI_MODEL,
             api_key=settings.OPENAI_API_KEY,
             temperature=temperature,
+            max_tokens=4096,
         )
     elif settings.LLM_PROVIDER == "groq":
         from langchain_groq import ChatGroq
@@ -41,6 +43,7 @@ def get_llm(temperature: float = 0.0) -> BaseChatModel:
             model=settings.GROQ_MODEL,
             groq_api_key=settings.GROQ_API_KEY,
             temperature=temperature,
+            max_tokens=4096,
         )
     else:
         raise ValueError(
