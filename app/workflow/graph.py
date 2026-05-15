@@ -6,6 +6,7 @@ Builds the exact flow required by the assignment:
 
 The 3 extraction agents run in parallel via LangGraph fan-out.
 Each agent only receives the pages assigned to it by the Segregator.
+Agent routing is tracked transparently in the response.
 """
 
 import logging
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # ── Node Functions ──────────────────────────────────────────────────────────
 # Each node takes the full state and returns a partial state update.
+# Each agent node also records its routing in agent_routing for transparency.
 
 
 def segregator_node(state: ClaimState) -> dict:
@@ -34,31 +36,80 @@ def segregator_node(state: ClaimState) -> dict:
 
 
 def id_agent_node(state: ClaimState) -> dict:
-    """Extract identity information from identity_document pages ONLY."""
-    page_nums = state["segregation"].get("identity_document", [])
+    """Extract identity info from identity_document + claim_forms pages.
+
+    Policy numbers and insurer details often appear on claim forms,
+    not on ID cards. The Segregator routes both page types to this
+    agent so it has the full context for identity + policy extraction.
+    """
+    id_pages = state["segregation"].get("identity_document", [])
+    claim_pages = state["segregation"].get("claim_forms", [])
+    page_nums = sorted(set(id_pages + claim_pages))
+
     # Route only the relevant pages — NOT the whole PDF
     relevant_pages = [p for p in state["pages"] if p.page_number in page_nums]
+    relevant_pages.sort(key=lambda p: p.page_number)
     logger.info(f"ID Agent: Processing {len(relevant_pages)} pages: {page_nums}")
+
     result = extract_identity(relevant_pages)
-    return {"id_data": result}
+
+    # Record routing transparently
+    routing = {
+        "id_agent": {
+            "pages_received": page_nums,
+            "source_doc_types": [],
+            "reason": "Extracts patient identity + insurance policy details",
+        }
+    }
+    if id_pages:
+        routing["id_agent"]["source_doc_types"].append(
+            {"type": "identity_document", "pages": id_pages}
+        )
+    if claim_pages:
+        routing["id_agent"]["source_doc_types"].append(
+            {"type": "claim_forms", "pages": claim_pages,
+             "reason": "Policy number and insurer name found on claim forms"}
+        )
+
+    return {"id_data": result, "agent_routing": routing}
 
 
 def discharge_agent_node(state: ClaimState) -> dict:
     """Extract discharge summary from discharge_summary pages ONLY."""
-    page_nums = state["segregation"].get("discharge_summary", [])
+    page_nums = sorted(state["segregation"].get("discharge_summary", []))
     relevant_pages = [p for p in state["pages"] if p.page_number in page_nums]
     logger.info(f"Discharge Agent: Processing {len(relevant_pages)} pages: {page_nums}")
+
     result = extract_discharge_summary(relevant_pages)
-    return {"discharge_data": result}
+
+    routing = {
+        "discharge_agent": {
+            "pages_received": page_nums,
+            "source_doc_types": [{"type": "discharge_summary", "pages": page_nums}],
+            "reason": "Extracts diagnosis, admission/discharge dates, physician details",
+        }
+    }
+
+    return {"discharge_data": result, "agent_routing": routing}
 
 
 def bill_agent_node(state: ClaimState) -> dict:
     """Extract itemized bill from itemized_bill pages ONLY."""
-    page_nums = state["segregation"].get("itemized_bill", [])
+    page_nums = sorted(state["segregation"].get("itemized_bill", []))
     relevant_pages = [p for p in state["pages"] if p.page_number in page_nums]
     logger.info(f"Bill Agent: Processing {len(relevant_pages)} pages: {page_nums}")
+
     result = extract_bill(relevant_pages)
-    return {"bill_data": result}
+
+    routing = {
+        "bill_agent": {
+            "pages_received": page_nums,
+            "source_doc_types": [{"type": "itemized_bill", "pages": page_nums}],
+            "reason": "Extracts all line items with costs and calculates totals",
+        }
+    }
+
+    return {"bill_data": result, "agent_routing": routing}
 
 
 def aggregator_node(state: ClaimState) -> dict:
@@ -92,18 +143,19 @@ def aggregator_node(state: ClaimState) -> dict:
         # Log if we corrected any values
         if llm_subtotal and abs(llm_subtotal - computed_subtotal) > 0.01:
             logger.warning(
-                f"Aggregator corrected subtotal: LLM said ${llm_subtotal}, "
-                f"computed ${computed_subtotal} (delta ${round(llm_subtotal - computed_subtotal, 2)})"
+                f"Aggregator corrected subtotal: LLM said {llm_subtotal}, "
+                f"computed {computed_subtotal} (delta {round(llm_subtotal - computed_subtotal, 2)})"
             )
         if llm_grand and abs(llm_grand - bill_data["grand_total"]) > 0.01:
             logger.warning(
-                f"Aggregator corrected grand_total: LLM said ${llm_grand}, "
-                f"computed ${bill_data['grand_total']}"
+                f"Aggregator corrected grand_total: LLM said {llm_grand}, "
+                f"computed {bill_data['grand_total']}"
             )
 
     final_result = {
         "claim_id": state["claim_id"],
         "segregation": state["segregation"],
+        "agent_routing": state.get("agent_routing", {}),
         "extracted_data": {
             "identity": state.get("id_data"),
             "discharge_summary": state.get("discharge_data"),
@@ -184,6 +236,7 @@ def process_claim(claim_id: str, pdf_bytes: bytes) -> dict:
         "claim_id": claim_id,
         "pages": pages,
         "segregation": {},
+        "agent_routing": {},
         "id_data": None,
         "discharge_data": None,
         "bill_data": None,

@@ -11,18 +11,23 @@ from app.models.schemas import IdentityData, PageData
 
 logger = logging.getLogger(__name__)
 
-ID_AGENT_PROMPT = """You are an expert at extracting identity information from documents.
+ID_AGENT_PROMPT = """You are an expert at extracting identity and insurance information from documents.
 
-Extract the following fields from the provided document pages:
-- patient_name: Full name of the patient/insured person
+You will receive identity documents (ID cards, Aadhaar, PAN, etc.) AND claim forms.
+Extract the following fields by combining information from ALL provided pages:
+
+- patient_name: Full name of the patient/insured person (from ID card or claim form)
 - date_of_birth: Date of birth (any format found)
-- id_type: Type of ID (e.g., Aadhaar, PAN, Passport, Driving License, Voter ID)
-- id_number: The ID number/document number
-- policy_number: Insurance policy number if present
-- insurer_name: Name of the insurance company if present
-- additional_details: Any other relevant identity details as key-value pairs
+- id_type: Type of government ID (e.g., Aadhaar, PAN, Passport, Driving License, State ID)
+- id_number: The government ID number/document number
+- policy_number: Insurance policy number (usually found on the CLAIM FORM, not the ID card)
+- insurer_name: Name of the insurance company (usually found on the CLAIM FORM header)
+- additional_details: Any other relevant details as key-value pairs (address, blood group, gender, member_id, etc.)
 
-If a field is not found in the documents, set it to null.
+IMPORTANT:
+- Policy number and insurer name are almost NEVER on the ID card — look for them on claim forms.
+- If the same field appears on multiple pages, prefer the most complete/detailed version.
+- If a field is truly not found on any page, set it to null.
 
 Return a JSON object matching this exact structure:
 {
@@ -32,7 +37,7 @@ Return a JSON object matching this exact structure:
     "id_number": "1234-5678-9012",
     "policy_number": "POL-2024-001",
     "insurer_name": "Star Health Insurance",
-    "additional_details": {"address": "123 Main St"}
+    "additional_details": {"address": "123 Main St", "member_id": "MEM-123"}
 }"""
 
 
